@@ -1,5 +1,4 @@
 import pandas as pd
-import os
 
 # NOTE:
 # RUn this script on 2-Regression

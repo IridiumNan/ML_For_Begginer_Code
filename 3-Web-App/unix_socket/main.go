@@ -4,14 +4,21 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"log/slog"
 	"net"
+	"net/http"
+	"os"
+	"strconv"
 )
 
-// this golang demo file just create a new connection then send a test request with features
-// in practice, you should reuse the unix socket connection instead of creating it for each task
+// WARN: Run this server on 3-Web-App dir or change this dir variable
+const staticDir = "unix_socket/static"
 
-const socketPath = "/tmp/py-predict.sock"
+// chnage this addr for expose
+// e.g. 0.0.0.0:8081
+const httpAddr = "127.0.0.1:8081"
 
 type Request struct {
 	// NOTE: All features should be defined with sequance alphabet
@@ -25,22 +32,59 @@ type Respond struct {
 	Country string `json:"Country"`
 }
 
-func main() {
+const socketPath = "/tmp/py-predict.sock"
+
+func newConn() net.Conn {
 	c, err := net.Dial("unix", socketPath)
 	if err != nil {
-		log.Fatalf("error while establish new connection: %s", err)
+		log.Fatalf("error while establishing new connection: %s", err)
 	}
 
-	defer c.Close()
-	// 20.0      gb   -2.916667  53.200000
+	return c
+}
 
-	req := Request{
-		Seconds:   20,
-		Longitude: -2.917,
-		Latitude:  53.2,
+func Router() http.Handler {
+	r := http.NewServeMux()
+
+	r.HandleFunc("/predict", predictHandler)
+
+	r.Handle("/", http.FileServerFS(os.DirFS(staticDir)))
+
+	return r
+}
+
+func predictHandler(w http.ResponseWriter, r *http.Request) {
+	latitudeStr := r.FormValue("latitude")
+	latitude, err := strconv.ParseFloat(latitudeStr, 32)
+	if err != nil {
+		slog.Error("error while parsing latitude", "err", err, "str", latitudeStr)
 	}
 
-	data, _ := json.Marshal(req)
+	longitudeStr := r.FormValue("longitude")
+	longitude, err := strconv.ParseFloat(longitudeStr, 32)
+	if err != nil {
+		slog.Error("error while parsing longitude", "err", err, "str", longitudeStr)
+	}
+
+	secondStr := r.FormValue("seconds")
+	seconds, err := strconv.ParseFloat(secondStr, 32)
+	if err != nil {
+		slog.Error("error while parsing seconds", "err", err, "str", secondStr)
+	}
+
+	reqData := Request{
+		Latitude:  float32(latitude),
+		Longitude: float32(longitude),
+		Seconds:   float32(seconds),
+	}
+
+	respData := predict(reqData, newConn())
+
+	fmt.Fprintf(w, "the country predicted is %s", respData.Country)
+}
+
+func predict(reqData Request, c io.ReadWriter) (resp Respond) {
+	data, _ := json.Marshal(reqData)
 
 	// write the length of send data
 	// so that server and read properly for this loop
@@ -49,8 +93,7 @@ func main() {
 	blength := make([]byte, 4)
 	binary.BigEndian.PutUint32(blength, ulength)
 
-	fmt.Printf("the length of blength: %d, the content of blength: %v\n", len(blength), blength)
-	_, err = c.Write(blength)
+	_, err := c.Write(blength)
 	if err != nil {
 		log.Fatalf("error while writing length: %s", err)
 	}
@@ -75,6 +118,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("error while unmarshal data: %s", err)
 	}
+	return res
+}
 
-	fmt.Println("result Country: ", res.Country)
+func main() {
+	r := Router()
+
+	err := http.ListenAndServe(httpAddr, r)
+	if err != nil {
+		log.Fatal("error while starting server", err)
+	}
 }

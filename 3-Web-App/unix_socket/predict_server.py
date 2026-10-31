@@ -53,7 +53,7 @@ class PredictRequestHandler(socketserver.BaseRequestHandler):
 
         output = self.model.predict(input_feature)
         # it will be (1, )
-        print(f"shape of output: {output.shape}")
+        # print(f"shape of output: {output.shape}")
         res = self.encoder.inverse_transform(output)
 
         self.write_res(res)
@@ -71,10 +71,7 @@ class PredictRequestHandler(socketserver.BaseRequestHandler):
     def load_feature(self) -> pd.DataFrame:
 
         blen = self.request.recv(4)
-        print(f"length of byte data: {len(blen)}")
-        print("byte data: ", blen)
         length = int.from_bytes(blen)
-        print(f"the length of data: {length}")
 
         byte_data: bytes = self.request.recv(length)
 

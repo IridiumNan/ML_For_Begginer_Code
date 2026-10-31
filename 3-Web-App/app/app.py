@@ -1,4 +1,5 @@
 import pickle
+import socket
 import numpy as np
 from flask import Flask, request, render_template
 
@@ -24,7 +25,7 @@ def predict():
 
     countries = ["Australia", "Canada", "Germany", "UK", "US"]
     return render_template(
-        "index.html", predict_text="Likely country: {}".format(countries[output])
+        "index.html", predict_text=f"Likely country: {countries[output]}"
     )
 
 

@@ -1,8 +1,8 @@
 import json
-import socket
 import socketserver
 import os
 import pickle
+import sys
 
 import numpy as np
 import pandas as pd
@@ -15,7 +15,7 @@ try:
         model: LogisticRegression = pickle.load(f)
 except OSError:
     print("model file not found")
-    exit(1)
+    sys.exit(1)
 
 
 from sklearn.preprocessing import LabelEncoder
@@ -29,34 +29,44 @@ except OSError:
 
 
 # req_data = {
-#     "seconds": 1,
-#     "longitude": 30,
-#     "latitude": 20,
+#     "Seconds": 1,
+#     "Longitude": 30,
+#     "Latitude": 20,
 # }
+
+# from ['us', nan, 'gb', 'ca', 'au', 'de']
+# to ["Australia", "Canada", "Germany", "UK", "US", "Unknown"]
+countryMap = {""}
 
 
 class PredictRequestHandler(socketserver.BaseRequestHandler):
     def __init__(self, request, client_address, server):
         self.model = model
         self.encoder = encoder
-        print(f"the type of mode; {type(model)}")
-        print(f"the type of encoder: {type(encoder)}")
         super().__init__(request, client_address, server)
-        return
 
     def setup(self):
         print("predict handler setup")
-        return
 
     def handle(self):
         input_feature = self.load_feature()
 
         output = self.model.predict(input_feature)
+        # it will be (1, )
         print(f"shape of output: {output.shape}")
-        print(output)
-
         res = self.encoder.inverse_transform(output)
-        print(res)
+
+        self.write_res(res)
+
+    def write_res(self, result):
+        # the result is (1, ) shape ndarray
+        res_data = {"Country": result[0]}
+
+        byte_data = json.dumps(res_data)
+
+        # send the length first
+        self.request.send(len(byte_data).to_bytes(length=4))
+        self.request.send(byte_data.encode())
 
     def load_feature(self) -> pd.DataFrame:
 
@@ -71,31 +81,6 @@ class PredictRequestHandler(socketserver.BaseRequestHandler):
         data_dict: dict = json.loads(byte_data.decode())
 
         return pd.DataFrame([data_dict])
-
-    def finish(self):
-        super().finish()
-
-
-class PingRequestHandler(socketserver.BaseRequestHandler):
-    def __init__(self, request, client_address, server):
-        super().__init__(request, client_address, server)
-        return
-
-    def setup(self):
-        print("ping handlder setting up")
-        super().setup()
-
-    def handle(self):
-
-        try:
-            while True:
-                data = self.request.recv(1024)
-                print(data.decode())
-                # self.request.sendall(f"your data is {data.decode()}".encode())
-                self.request.sendall("hello from server".encode())
-        finally:
-            print("connect closed by client")
-            return
 
     def finish(self):
         super().finish()

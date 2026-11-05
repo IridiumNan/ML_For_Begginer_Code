@@ -1,19 +1,25 @@
 # Maze simulation environment for Reinforcement Learning tutorial
-# by Dmitry Soshnikov
-# http://soshnikov.com
+# by Dmitry Soshnikov, http://soshnikov.com
+# pygame port: Board stores the state, BoardRenderer draws it and keeps none.
 
-from cv2.typing import MatLike
-import matplotlib.pyplot as plt
-import numpy as np
-import cv2
+import os
 import random
-import math
+
+import pygame
+
+IMAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images")
+
+BACKGROUND_COLOR = (255, 255, 255)
+GRID_COLOR = (77, 77, 77)
+WATER_COLOR = (0, 0, 255)
+TREE_COLOR = (0, 255, 0)
+ARROW_COLOR = (40, 40, 40)
+
+__all__ = ["Board", "BoardRenderer", "open_window", "clip", "probs", "imload"]
 
 
 def clip(min, max, x):
-    """
-    restric the value between [min, max]
-    """
+    """restric the value between [min, max]"""
     if x < min:
         return min
     if x > max:
@@ -21,41 +27,32 @@ def clip(min, max, x):
     return x
 
 
-def imload(fname, size) -> MatLike:
-    """
-    load image from file
-    """
-    img = cv2.imread(fname)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img = cv2.resize(img, (size, size), interpolation=cv2.INTER_LANCZOS4)
-    img = img / np.max(img)
-    return img
-
-
-def draw_line(dx, dy, size=50):
-    p = np.ones((size - 2, size - 2, 3))
-    if dx == 0:
-        dx = 0.001
-    m = (size - 2) // 2
-    l = math.sqrt(dx * dx + dy * dy) * (size - 4) / 2
-    a = math.atan(dy / dx)
-    cv2.line(
-        p,
-        (int(m - l * math.cos(a)), int(m - l * math.sin(a))),
-        (int(m + l * math.cos(a)), int(m + l * math.sin(a))),
-        (0, 0, 0),
-        1,
-    )
-    s = -1 if dx < 0 else 1
-    cv2.circle(p, (int(m + s * l * math.cos(a)), int(m + s * l * math.sin(a))), 3, 0)
-    return p
-
-
-def probs(v):
-    v = v - v.min()
-    if v.sum() > 0:
-        v = v / v.sum()
+def probs(v, eps=1e-3):
+    v = v - v.min() + eps
+    v = v / v.sum()
     return v
+
+
+# def probs(v):
+#     """Normalise values to probabilities (plain Python, no numpy needed)."""
+#     v = [float(x) - min(v) for x in v]
+#     total = sum(v)
+#     return [x / total for x in v] if total > 0 else v
+
+
+def imload(fname, size):
+    """Load an image from images/ and fit it into a size x size box."""
+    path = fname if os.path.isabs(fname) else os.path.join(IMAGES_DIR, fname)
+    img = pygame.image.load(path)
+    if img.get_bitsize() not in (24, 32):  # palette surfaces cannot be scaled
+        rgba = pygame.Surface(img.get_size(), pygame.SRCALPHA)
+        rgba.blit(img, (0, 0))
+        img = rgba
+    w, h = img.get_size()
+    scale = size / max(w, h)
+    return pygame.transform.smoothscale(
+        img, (max(1, round(w * scale)), max(1, round(h * scale)))
+    )
 
 
 class Board:
@@ -69,17 +66,8 @@ class Board:
     def __init__(self, width, height, size=50):
         self.width = width
         self.height = height
-        self.size = size + 2
-        self.matrix = np.zeros((width, height))
-        self.grid_color = (0.6, 0.6, 0.6)
-        self.background_color = (1.0, 1.0, 1.0)
-        self.grid_thickness = 1
-        self.grid_line_type = cv2.LINE_AA
-        self.pics = {
-            "wolf": imload("images/wolf.png", size - 4),
-            "apple": imload("images/apple.png", size - 4),
-            "human": imload("images/human.png", size - 4),
-        }
+        self.size = size + 2  # pixel pitch of one cell
+        self.matrix = [[Board.Cell.empty] * height for _ in range(width)]
         self.human = (0, 0)
         self.frame_no = 0
 
@@ -98,41 +86,32 @@ class Board:
             x = random.randint(0, self.width - 1)
             y = random.randint(0, self.height - 1)
             for _ in range(water_size):
-                self.matrix[x, y] = Board.Cell.water
+                self.matrix[x][y] = Board.Cell.water
                 x = clip(0, self.width - 1, x + random.randint(-1, 1))
                 y = clip(0, self.height - 1, y + random.randint(-1, 1))
-        for _ in range(num_trees):
+        self._place(num_trees, Board.Cell.tree)
+        self._place(num_wolves, Board.Cell.wolf)
+        self._place(num_apples, Board.Cell.apple)
+
+    def _place(self, count, value):
+        for _ in range(count):
             while True:
                 x = random.randint(0, self.width - 1)
                 y = random.randint(0, self.height - 1)
-                if self.matrix[x, y] == Board.Cell.empty:
-                    self.matrix[x, y] = Board.Cell.tree  # tree
-                    break
-        for _ in range(num_wolves):
-            while True:
-                x = random.randint(0, self.width - 1)
-                y = random.randint(0, self.height - 1)
-                if self.matrix[x, y] == Board.Cell.empty:
-                    self.matrix[x, y] = Board.Cell.wolf  # wolf
-                    break
-        for _ in range(num_apples):
-            while True:
-                x = random.randint(0, self.width - 1)
-                y = random.randint(0, self.height - 1)
-                if self.matrix[x, y] == Board.Cell.empty:
-                    self.matrix[x, y] = Board.Cell.apple
+                if self.matrix[x][y] == Board.Cell.empty:
+                    self.matrix[x][y] = value
                     break
 
     def at(self, pos=None):
-        if pos:
-            return self.matrix[pos[0], pos[1]]
-        else:
-            return self.matrix[self.human[0], self.human[1]]
+        """
+        return specific pos Cell
+
+        such as Cell.wolf, Cell.apple etc
+        """
+        return self.matrix[(pos or self.human)[0]][(pos or self.human)[1]]
 
     def is_valid(self, pos):
-        return (
-            pos[0] >= 0 and pos[0] < self.width and pos[1] >= 0 and pos[1] < self.height
-        )
+        return 0 <= pos[0] < self.width and 0 <= pos[1] < self.height
 
     def move_pos(self, pos, dpos):
         return (pos[0] + dpos[0], pos[1] + dpos[1])
@@ -143,9 +122,7 @@ class Board:
             self.human = new_pos
 
     def random_pos(self):
-        x = random.randint(0, self.width - 1)
-        y = random.randint(0, self.height - 1)
-        return (x, y)
+        return (random.randint(0, self.width - 1), random.randint(0, self.height - 1))
 
     def random_start(self):
         while True:
@@ -155,75 +132,18 @@ class Board:
                 break
 
     def image(self, Q=None):
-        img = np.zeros((self.height * self.size + 1, self.width * self.size + 1, 3))
-        img[:, :, :] = self.background_color
-        # Draw water
-        for x in range(self.width):
-            for y in range(self.height):
-                if (x, y) == self.human:
-                    ov = self.pics["human"]
-                    img[
-                        self.size * y + 2 : self.size * y + ov.shape[0] + 2,
-                        self.size * x + 2 : self.size * x + 2 + ov.shape[1],
-                        :,
-                    ] = np.minimum(ov, 1.0)
-                    continue
-                if self.matrix[x, y] == Board.Cell.water:
-                    img[
-                        self.size * y : self.size * (y + 1),
-                        self.size * x : self.size * (x + 1),
-                        :,
-                    ] = (0, 0, 1.0)
-                if self.matrix[x, y] == Board.Cell.wolf:
-                    ov = self.pics["wolf"]
-                    img[
-                        self.size * y + 2 : self.size * y + ov.shape[0] + 2,
-                        self.size * x + 2 : self.size * x + 2 + ov.shape[1],
-                        :,
-                    ] = np.minimum(ov, 1.0)
-                if self.matrix[x, y] == Board.Cell.apple:  # apple
-                    ov = self.pics["apple"]
-                    img[
-                        self.size * y + 2 : self.size * y + ov.shape[0] + 2,
-                        self.size * x + 2 : self.size * x + 2 + ov.shape[1],
-                        :,
-                    ] = np.minimum(ov, 1.0)
-                if self.matrix[x, y] == Board.Cell.tree:  # tree
-                    img[
-                        self.size * y : self.size * (y + 1),
-                        self.size * x : self.size * (x + 1),
-                        :,
-                    ] = (0, 1.0, 0)
-                if self.matrix[x, y] == Board.Cell.empty and Q is not None:
-                    p = probs(Q[x, y])
-                    dx, dy = 0, 0
-                    for i, (ddx, ddy) in enumerate([(-1, 0), (1, 0), (0, -1), (0, 1)]):
-                        dx += ddx * p[i]
-                        dy += ddy * p[i]
-                        l = draw_line(dx, dy, self.size)
-                        img[
-                            self.size * y + 2 : self.size * y + l.shape[0] + 2,
-                            self.size * x + 2 : self.size * x + 2 + l.shape[1],
-                            :,
-                        ] = l
-
-        # Draw grid
-        for i in range(self.height + 1):
-            img[:, i * self.size] = 0.3
-            # cv2.line(img,(0,i*self.size),(self.width*self.size,i*self.size), self.grid_color, self.grid_thickness,lineType=self.grid_line_type)
-        for j in range(self.width + 1):
-            img[j * self.size, :] = 0.3
-            # cv2.line(img,(j*self.size,0),(j*self.size,self.height*self.size), self.grid_color, self.grid_thickness,lineType=self.grid_line_type)
-        return img
+        """Return a Surface holding the current state (no window needed)."""
+        return BoardRenderer().image(self, Q)
 
     def plot(self, Q=None):
-        plt.figure(figsize=(11, 6))
-        plt.imshow(self.image(Q), interpolation="hanning")
+        """Alias for image(); the board never owns a window."""
+        return self.image(Q)
 
     def saveimage(self, filename, Q=None):
-        cv2.imwrite(filename, 255 * self.image(Q)[..., ::-1])
+        pygame.image.save(self.image(Q), filename)
 
     def walk(self, policy, save_to=None, start=None):
+        """Run one episode without rendering. Returns steps, or -1 on failure."""
         n = 0
         if start:
             self.human = start
@@ -246,3 +166,107 @@ class Board:
                     break
             n += 1
 
+
+# sprites only depend on the cell pitch, so they are memoised;
+# a BoardRenderer still holds no state of its own.
+_SPRITES = {}
+
+
+def _sprite(name, pitch):
+    if (name, pitch) not in _SPRITES:
+        _SPRITES[name, pitch] = imload(name + ".png", pitch - 6)
+    return _SPRITES[name, pitch]
+
+
+class BoardRenderer:
+    """Draws a Board and holds no state: every call repaints from scratch."""
+
+    # Q values are read as L, R, U, D, as in the original
+    directions = ((-1, 0), (1, 0), (0, -1), (0, 1))
+
+    @staticmethod
+    def size(board):
+        return (board.width * board.size + 1, board.height * board.size + 1)
+
+    @staticmethod
+    def _blit(surface, name, rect, pitch):
+        pic = _sprite(name, pitch)
+        surface.blit(pic, pic.get_rect(center=rect.center))
+
+    def _arrow(self, surface, rect, values):
+        """Average policy direction of a cell, from its Q values."""
+        p = probs(values)
+        dx = sum(p[i] * d[0] for i, d in enumerate(self.directions))
+        dy = sum(p[i] * d[1] for i, d in enumerate(self.directions))
+        if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+            return
+        cx, cy = rect.center
+        reach = rect.width / 2 - 4
+        end = (cx + dx * reach, cy + dy * reach)
+        pygame.draw.line(
+            surface, ARROW_COLOR, (cx - dx * reach, cy - dy * reach), end, 2
+        )
+        pygame.draw.circle(surface, ARROW_COLOR, (round(end[0]), round(end[1])), 3)
+
+    def draw(self, surface, board, Q=None):
+        """Repaint the board into a surface whose top-left corner is (0, 0)."""
+        cell = board.size
+        surface.fill(BACKGROUND_COLOR)
+        for x in range(board.width):
+            for y in range(board.height):
+                rect = pygame.Rect(x * cell + 1, y * cell + 1, cell - 1, cell - 1)
+                value = board.matrix[x][y]
+                if (x, y) == board.human:
+                    self._blit(surface, "human", rect, cell)
+                elif value == Board.Cell.water:
+                    surface.fill(WATER_COLOR, rect)
+                elif value == Board.Cell.tree:
+                    surface.fill(TREE_COLOR, rect)
+                elif value == Board.Cell.wolf:
+                    self._blit(surface, "wolf", rect, cell)
+                elif value == Board.Cell.apple:
+                    self._blit(surface, "apple", rect, cell)
+                elif Q is not None:
+                    self._arrow(surface, rect, Q[x][y])
+
+        for i in range(board.width + 1):
+            pygame.draw.line(
+                surface, GRID_COLOR, (i * cell, 0), (i * cell, board.height * cell)
+            )
+        for j in range(board.height + 1):
+            pygame.draw.line(
+                surface, GRID_COLOR, (0, j * cell), (board.width * cell, j * cell)
+            )
+        return surface
+
+    def image(self, board, Q=None):
+        """A fresh Surface holding the current board state."""
+        return self.draw(pygame.Surface(self.size(board)), board, Q)
+
+    def present(self, screen, board, Q=None):
+        """Repaint into an existing window surface and flip it."""
+        self.draw(screen, board, Q)
+        pygame.display.flip()
+
+
+def open_window(board, caption="RL maze"):
+    """Create the window; SCALED keeps the surface at board size on HiDPI."""
+    pygame.init()
+    pygame.display.set_caption(caption)
+    return pygame.display.set_mode(BoardRenderer.size(board), pygame.SCALED)
+
+
+class WalkResult:
+    def __init__(self, steps: int, success: bool, cause: str, path):
+        """
+        WalkResult store the result for a single episode
+        """
+        self.steps = steps
+        self.success = success
+        self.cause = cause
+        self.path = path
+
+    def __str__(self):
+        if self.success:
+            return f"success with {self.steps} steps"
+        return f"failed because {self.cause} after {self.steps} steps"

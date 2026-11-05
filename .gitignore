@@ -3,3 +3,4 @@ model.onnx
 data/Hotel_Reviews.csv
 Hotel_Reviews*.csv
 __pycache__/
+.codewhale/

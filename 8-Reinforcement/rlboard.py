@@ -82,6 +82,9 @@ class Board:
     ):
         if seed:
             random.seed(seed)
+        # start from an empty board: randomize(seed=x) must be reproducible and
+        # must not pile new obstacles on top of the previous call's ones
+        self.matrix = [[Board.Cell.empty] * self.height for _ in range(self.width)]
         for _ in range(num_water):
             x = random.randint(0, self.width - 1)
             y = random.randint(0, self.height - 1)

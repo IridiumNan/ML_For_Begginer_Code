@@ -241,7 +241,7 @@ def train_Q_table(
             )
             window_steps = 0
 
-    if cut_offs:
+    if cut_offs and verbose:
         print(f"{cut_offs} episodes hit the {max_steps} step cap")
     return Q
 
@@ -289,46 +289,146 @@ def train_evaluate():
     plot_summaries(summaries, batch_loop, 0, "output/display")
 
 
-def plot_summaries(summaries: list[Summary], epoch: int, start: int, pic_dir: str):
+def plot_summaries(summaries, epoch: int, start: int, pic_dir: str, prefix: str = ""):
+    """Plot the three curves and return the written file paths.
 
-    domain = [start + epoch * i for i in range(len(summaries))]
-
-    success_rates = []
-    success_avg_steps = []
-    total_avg_steps = []
-
-    for s in summaries:
-        success_rates.append(s.success_rate())
-        success_avg_steps.append(s.success_avg_steps())
-        total_avg_steps.append(s.total_avg_steps())
+    summaries: one list of Summary (single curve), or {label: [Summary]}
+    to draw one curve per label in the same figure.
+    """
+    if not isinstance(summaries, dict):
+        summaries = {"": summaries}
 
     import matplotlib.pyplot as plt
 
     os.makedirs(pic_dir, exist_ok=True)
 
-    p1 = os.path.join(pic_dir, "success_rate.png")
-    p2 = os.path.join(pic_dir, "success_avg_steps.png")
-    p3 = os.path.join(pic_dir, "total_avg_steps.png")
+    metrics = (
+        ("success rate", "success_rate", lambda s: s.success_rate()),
+        ("success average steps", "success_avg_steps", success_avg_steps),
+        ("total average steps", "total_avg_steps", lambda s: s.total_avg_steps()),
+    )
 
-    plt.plot(domain, success_rates)
-    plt.title("success rate graph")
-    plt.xlabel("train epochs")
-    plt.ylabel("success rate")
-    plt.savefig(p1)
+    paths = []
+    for title, key, getter in metrics:
+        plt.figure(figsize=(7, 4.5))
+        for label, group in summaries.items():
+            if not group:
+                continue
+            domain = [start + epoch * i for i in range(len(group))]
+            plt.plot(
+                domain,
+                [getter(s) for s in group],
+                label=label or None,
+                marker="o",
+                markersize=3,
+            )
+        plt.title(title)
+        plt.xlabel("train epochs")
+        plt.ylabel(title)
+        plt.grid(alpha=0.3)
+        if len(summaries) > 1:
+            plt.legend(fontsize=8)
+        path = os.path.join(pic_dir, f"{prefix}{key}.png")
+        plt.savefig(path, dpi=120, bbox_inches="tight")
+        plt.close()
+        paths.append(path)
 
-    plt.clf()
-    plt.plot(domain, success_avg_steps)
-    plt.title("success average steps")
-    plt.xlabel("train epochs")
-    plt.ylabel("steps")
-    plt.savefig(p2)
+    return paths
 
-    plt.clf()
-    plt.plot(domain, total_avg_steps)
-    plt.title("total avg steps")
-    plt.xlabel("train epochs")
-    plt.ylabel("steps")
-    plt.savefig(p3)
+
+def success_avg_steps(s: Summary):
+    """Success average steps, nan when nothing succeeded (dividing by zero)."""
+    return s.success_steps / s.success_n if s.success_n else float("nan")
+
+
+def merge_summaries(summaries: list[Summary]) -> Summary:
+    """Pool several Summary objects into one, by adding their raw counts."""
+    merged = Summary([])
+    merged.total_n = sum(s.total_n for s in summaries)
+    merged.total_steps = sum(s.total_steps for s in summaries)
+    merged.success_n = sum(s.success_n for s in summaries)
+    merged.success_steps = sum(s.success_steps for s in summaries)
+
+    causes = {}
+    for s in summaries:
+        for cause, n in s.cause.items():
+            causes[cause] = causes.get(cause, 0) + n
+    merged.cause = causes
+    return merged
+
+
+def alpha_strategies():
+    """The alpha_func strategies compared by alpha_experiment."""
+    return {
+        "constant 0.1": wrap_alpha(0.1),
+        "constant 0.3": wrap_alpha(0.3),
+        "constant 0.5 (default)": wrap_alpha(0.5),
+        "constant 0.7": wrap_alpha(0.7),
+        "constant 1.0": wrap_alpha(1.0),
+        # "exp(-n/1e5)": lambda n: float(np.exp(-n / 1e5)),
+        # "1/(1+n/50)": lambda n: 1.0 / (1.0 + n / 50.0),
+    }
+
+
+def alpha_experiment(
+    strategies=None,
+    maps=(13, 7, 1, 21, 42, 99),
+    total_epochs=500,
+    batch=25,
+    eval_loop=100,
+    seed=0,
+    pic_dir="output/alpha",
+    verbose=True,
+):
+    """Train one Q table per alpha_func strategy and compare the three curves.
+
+    Every strategy is trained on the same maps, from the same init_Q, with the
+    same number of evaluation episodes and the same random state at every
+    checkpoint, so the curves are directly comparable. Checkpoints of all maps
+    are pooled into one Summary per strategy.
+
+    returns {strategy name: [Summary per checkpoint]}, and the written paths
+    """
+    if strategies is None:
+        strategies = alpha_strategies()
+
+    checkpoints = list(range(0, total_epochs + 1, batch))
+    curves = {}
+
+    for name, alpha_func in strategies.items():
+        per_checkpoint = []
+
+        for map_seed in maps:
+            m.randomize(seed=map_seed)
+            random.seed(seed)
+            Q = default_init_Q.copy()
+
+            for i, trained in enumerate(checkpoints):
+                # identical eval randomness for every strategy and map
+                random.seed(seed + trained)
+                per_checkpoint.append(evaluate_Q(Q, eval_loop))
+
+                if i + 1 < len(checkpoints):
+                    random.seed(seed + 1 + trained)
+                    Q = train_Q_table(Q, batch, alpha_func=alpha_func)
+
+        pooled = [
+            merge_summaries(per_checkpoint[k :: len(checkpoints)])
+            for k in range(len(checkpoints))
+        ]
+        curves[name] = pooled
+
+        if verbose:
+            last = pooled[-1]
+            print(
+                f"{name:22s} success={last.success_rate() * 100:5.1f}%  "
+                f"success_avg={success_avg_steps(last):6.2f}  "
+                f"total_avg={last.total_avg_steps():6.2f}",
+                flush=True,
+            )
+
+    paths = plot_summaries(curves, batch, 0, pic_dir)
+    return curves, paths
 
 
 def main2():
@@ -351,5 +451,12 @@ def main3():
     train_evaluate()
 
 
+def main4():
+    curves, paths = alpha_experiment(total_epochs=200, batch=5)
+    for path in paths:
+        print(f"wrote {path}")
+    return curves
+
+
 if __name__ == "__main__":
-    main3()
+    main4()

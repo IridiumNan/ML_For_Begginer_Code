@@ -270,3 +270,58 @@ class WalkResult:
         if self.success:
             return f"success with {self.steps} steps"
         return f"failed because {self.cause} after {self.steps} steps"
+
+
+class Summary:
+    def __init__(self, results: list[WalkResult]):
+        """
+        Calculate
+        success / total
+        average steps
+        average success steps
+        failures and causes
+        """
+        total_n = len(results)
+        total_steps = 0
+
+        success_n = 0
+        success_steps = 0
+
+        causes = {}
+
+        for r in results:
+            total_steps += r.steps
+
+            if r.success:
+                success_n += 1
+                success_steps += r.steps
+            else:
+                causes[r.cause] = causes.get(r.cause, 0) + 1
+
+        self.total_n = total_n
+        self.total_steps = total_steps
+        self.success_n = success_n
+        self.success_steps = success_steps
+        self.cause = causes
+
+    def total_avg_steps(self):
+        """
+        return total steps / total_n
+        means the average steps each episode cost
+        """
+        return self.total_steps / self.total_n
+
+    def success_rate(self):
+        """
+        return success_n / total_n
+        means success rate for this results
+        """
+        return self.success_n / self.total_n
+
+    def success_avg_steps(self):
+        """
+        return success_steps / success_n
+
+        means average steps for success game
+        """
+        return self.success_steps / self.success_n

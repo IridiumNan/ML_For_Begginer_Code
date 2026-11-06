@@ -1,9 +1,11 @@
+import os
 import random
 import numpy as np
 import time
 import pygame
 from rlboard import *
 from rlboard import WalkResult
+from rlboard import Summary
 
 width, height = 8, 8
 
@@ -70,35 +72,35 @@ def random_policy(m: Board):
     return random.choice(list(actions))
 
 
+def play_loop(policy=random_policy, loop=10):
+    """
+    play_loop play this game with given loop
+    return a a list of WalkResult
+    """
+    results = []
+
+    for _ in range(loop):
+        results.append(play_episode(m, policy, None, None))
+    return results
+
+
+def result_summary(results: list[WalkResult]) -> str:
+    s = Summary(results)
+
+    return f"""
+    success {s.success_n} / {s.total_n}
+    avg steps {s.total_avg_steps():.2f}
+    avg success steps {s.success_avg_steps()}
+    failures {s.cause or 0}
+    """
+
+
 def print_statics(policy=random_policy, loop=100, header=None):
     """
     This function play episode with loop counts and policy
     """
-
-    # TODO: Rewrite this function
-
-    # s success steps (cumulate)
-    # n success game counts
-    # total total steps (cumulate)
-    s, n, total = 0, 0, 0
-    causes = {}
-    for _ in range(loop):
-        r = play_episode(m, policy, None, None)
-        total += r.steps
-        if r.success:
-            s += r.steps
-            n += 1
-        else:
-            causes[r.cause] = causes.get(r.cause, 0) + 1
-    avg = s / n if n else float("inf")
-
-    print(f"""
-        {header}
-        success {n} / {loop}
-        avg path = {avg:.2f}
-        total steps = {total} 
-        failures = {causes or 0}\n
-        """)
+    results = play_loop(policy, loop)
+    print(f"{header}\n{result_summary(results)}")
 
 
 def play_with_render():
@@ -241,22 +243,71 @@ def qpolicy_strict(Q):
     return qpolicy_inner
 
 
-def evaluate_Q():
-    pass
-    # TODO:
+def evaluate_Q(Q, loop=10):
+    policy = qpolicy_strict(Q)
+
+    results = play_loop(policy, loop)
+
+    s = Summary(results)
+    return s
 
 
 def train_evaluate():
-    total_loop = 1000
-    batch_loop = 100
+    total_loop = 200
+    batch_loop = 5
     curr_loop = 0
 
     curr_Q = default_init_Q
+
+    summaries = []
     while curr_loop < total_loop:
+        summaries.append(evaluate_Q(curr_Q, 100))
+
         curr_Q = train_Q_table(curr_Q, batch_loop)
+        # evaluate_Q(curr_Q, =f"training loop {curr_loop}")
+        curr_loop += batch_loop
+
+    plot_summaries(summaries, batch_loop, 0)
 
 
-def main():
+def plot_summaries(summaries: list[Summary], epoch: int, start: int):
+
+    domain = [start + epoch * i for i in range(len(summaries))]
+
+    success_rates = []
+    success_avg_steps = []
+    total_avg_steps = []
+
+    for s in summaries:
+        success_rates.append(s.success_rate())
+        success_avg_steps.append(s.success_avg_steps())
+        total_avg_steps.append(s.total_avg_steps())
+
+    import matplotlib.pyplot as plt
+
+    os.makedirs("./output", exist_ok=True)
+    plt.plot(domain, success_rates)
+    plt.title("success rate graph")
+    plt.xlabel("train epochs")
+    plt.ylabel("success rate")
+    plt.savefig("output/success_rates.png")
+
+    plt.clf()
+    plt.plot(domain, success_avg_steps)
+    plt.title("success average steps")
+    plt.xlabel("train epochs")
+    plt.ylabel("steps")
+    plt.savefig("output/success_avg_steps.png")
+
+    plt.clf()
+    plt.plot(domain, total_avg_steps)
+    plt.title("total avg steps")
+    plt.xlabel("train epochs")
+    plt.ylabel("steps")
+    plt.savefig("output/total_avg_steps")
+
+
+def main2():
     # random policy
     print_statics(header="Random policy")
 
@@ -272,5 +323,9 @@ def main():
     print_statics(policy, 100, header="Q after training")
 
 
+def main3():
+    train_evaluate()
+
+
 if __name__ == "__main__":
-    main()
+    main3()

@@ -159,7 +159,24 @@ def wrap_Q(Q):
     return inner_Q
 
 
-def train_Q_table(init_Q=default_init_Q, epochs=5000, verbose=False):
+def default_alpha(n):
+    return 0.5
+
+
+def wrap_alpha(alpha):
+    """
+    Wrap a single alpha value to a alpha_func
+    """
+
+    def alpha_func(n):
+        return alpha
+
+    return alpha_func
+
+
+def train_Q_table(
+    init_Q=default_init_Q, epochs=5000, verbose=False, alpha_func=default_alpha
+):
     """
     init_Q: the initialize Q (a tensor)
 
@@ -168,6 +185,7 @@ def train_Q_table(init_Q=default_init_Q, epochs=5000, verbose=False):
     verbose: control inner print function
     if True, print more details when training
 
+    alpha_func: a function read current n (loop) then return alpha
     """
     Q = init_Q.copy()
 
@@ -193,7 +211,8 @@ def train_Q_table(init_Q=default_init_Q, epochs=5000, verbose=False):
             r = reward(m)
             cum_reward += r
 
-            alpha = np.exp(-n / 1e5)
+            alpha = alpha_func(n)
+            # alpha = np.exp(-n / 1e5)
             gamma = 0.5
             ai = action_idx[a]
             # apple / wolf / water / off the board all end the episode, so
@@ -267,10 +286,10 @@ def train_evaluate():
         # evaluate_Q(curr_Q, =f"training loop {curr_loop}")
         curr_loop += batch_loop
 
-    plot_summaries(summaries, batch_loop, 0)
+    plot_summaries(summaries, batch_loop, 0, "output/display")
 
 
-def plot_summaries(summaries: list[Summary], epoch: int, start: int):
+def plot_summaries(summaries: list[Summary], epoch: int, start: int, pic_dir: str):
 
     domain = [start + epoch * i for i in range(len(summaries))]
 
@@ -285,26 +304,31 @@ def plot_summaries(summaries: list[Summary], epoch: int, start: int):
 
     import matplotlib.pyplot as plt
 
-    os.makedirs("./output", exist_ok=True)
+    os.makedirs(pic_dir, exist_ok=True)
+
+    p1 = os.path.join(pic_dir, "success_rate.png")
+    p2 = os.path.join(pic_dir, "success_avg_steps.png")
+    p3 = os.path.join(pic_dir, "total_avg_steps.png")
+
     plt.plot(domain, success_rates)
     plt.title("success rate graph")
     plt.xlabel("train epochs")
     plt.ylabel("success rate")
-    plt.savefig("output/success_rates.png")
+    plt.savefig(p1)
 
     plt.clf()
     plt.plot(domain, success_avg_steps)
     plt.title("success average steps")
     plt.xlabel("train epochs")
     plt.ylabel("steps")
-    plt.savefig("output/success_avg_steps.png")
+    plt.savefig(p2)
 
     plt.clf()
     plt.plot(domain, total_avg_steps)
     plt.title("total avg steps")
     plt.xlabel("train epochs")
     plt.ylabel("steps")
-    plt.savefig("output/total_avg_steps")
+    plt.savefig(p3)
 
 
 def main2():

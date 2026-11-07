@@ -1,0 +1,6 @@
+.codewhale/
+__pycache__/
+tuning/
+runs/
+.cache/
+*.plk
